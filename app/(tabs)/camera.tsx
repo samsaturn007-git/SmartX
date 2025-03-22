@@ -1,170 +1,97 @@
-import React from 'react';
-import { Ionicons } from '@expo/vector-icons';
-import { CameraView, CameraType, useCameraPermissions, useMicrophonePermissions } from 'expo-camera';
-import { useState } from 'react';
-import { Button, StyleSheet, Text, TouchableOpacity, View ,Dimensions} from 'react-native';
-import { supabase } from '@/utils/supabase';
+import React, { useState, useEffect } from 'react';
+import { View } from 'react-native';
 import { useAuth } from '@/providers/AuthProvider';
-import { useRouter } from 'expo-router';
-import * as ImagePicker from 'expo-image-picker';
-import {Video,ResizeMode} from 'expo-av';
+import { LiveStream } from '@/components/LiveStream';
+import { supabase, createLiveStream } from '@/utils/supabase';
+import * as Location from 'expo-location';
 
+// Generate a random UUID
+const generateUUID = () => {
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+    const r = Math.random() * 16 | 0;
+    const v = c === 'x' ? r : (r & 0x3 | 0x8);
+    return v.toString(16);
+  });
+};
 
-export default function App() {
-  const [facing, setFacing] = useState<CameraType>('back');
-  const [cameraPermission, requestCameraPermission] = useCameraPermissions();
-  const [audioPermission, requestAudioPermission] = useMicrophonePermissions();
-  const [isRecording, setIsRecording] = useState(false);    
-  const cameraRef = React.useRef<CameraView>(null);
-  const videoRef = React.useRef<Video>(null);
-  const [videoUri, setVideoUri] = useState<string | null>(null);
+export default function CameraScreen() {
   const { user } = useAuth();
-  const router = useRouter();
-  const [status, setStatus] = useState({isLoaded: false, isPlaying: false});
+  const [postId] = useState(() => generateUUID());
+  const [location, setLocation] = useState<{
+    latitude: number;
+    longitude: number;
+    address: string;
+  } | null>(null);
 
-  if (!cameraPermission || !audioPermission || !cameraPermission.granted || !audioPermission.granted) {
-    return (
-      <View style={styles.container}>
-        <Text style={styles.message}>We need your permissions to access the camera and record audio</Text>
-        <Button onPress={requestCameraPermission} title="Grant Camera Permission" />
-        <Button onPress={requestAudioPermission} title="Grant Audio Permission" />
-      </View>
-    );
-  }
-
-  function toggleCameraFacing() {
-    setFacing(current => (current === 'back' ? 'front' : 'back'));
-  }
-
-  const recordVideo = async () => { 
-    if (isRecording) {
-      setIsRecording(false);
-      cameraRef.current?.stopRecording();
-    } else {
-      setIsRecording(true); 
-      const video = await cameraRef.current?.recordAsync();
-      setVideoUri(video.uri);
+  useEffect(() => {
+    if (user) {
+      getCurrentLocation();
     }
-  }
+  }, [user]);
 
-  const saveVideo = async () => {
-    const formData = new FormData();
-    const fileName = videoUri?.split('/').pop();
-    formData.append('file',{
-        uri: videoUri,
-        type: `video/${fileName?.split('.').pop()}`,
-        name: fileName
-    });
-    const { data, error } =  await supabase.storage
-        .from(`videos/${user?.id}`)
-        .upload(fileName, formData, {
-            cacheControl: '3600000000',
-            upsert: false,
-        });
-    if(error) console.error(error);
+  const getCurrentLocation = async () => {
+    try {
+      const { status } = await Location.requestForegroundPermissionsAsync();
+      if (status !== 'granted') {
+        alert('Location permission is required for live streaming.');
+        return;
+      }
 
-
-    const {error: videoError } = await supabase.from('Video').insert({
-        title: "Test title here",
-        uri: `${user?.id}/${fileName}`,
-        user_id: user?.id,
-    });
-    if(videoError) console.error(videoError);
-    router.back();
-    }
-
-    const pickImage = async () => {
-      let result = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: ImagePicker.MediaTypeOptions.All,
-        allowsEditing: true,
-        aspect: [4, 3],
-        quality: 0.1,
+      const location = await Location.getCurrentPositionAsync({});
+      const [address] = await Location.reverseGeocodeAsync({
+        latitude: location.coords.latitude,
+        longitude: location.coords.longitude,
       });
-      console.log(result.assets[0].uri)
-      setVideoUri(result.assets[0].uri);
-    };
 
-  
-    return (
-      <View className="flex-1">
-        {videoUri ? (
-          <View className="flex-1">
-            <TouchableOpacity className="absolute bottom-10 left-36 z-10" onPress={saveVideo}>
-              <Ionicons name="checkmark-circle" size={100} color="white" />
-            </TouchableOpacity>
-            <TouchableOpacity className='flex-1' onPress={() => status.isPlaying ? videoRef.current.pauseAsync() : videoRef.current.playAsync()}>
-              <Video
-                ref={videoRef}
-                style={{
-                  flex: 1,
-                  width: Dimensions.get('window').width,
-                  height: Dimensions.get('window').height,
+      const locationString = [
+        address.street,
+        address.city,
+        address.region,
+        address.country,
+      ]
+        .filter(Boolean)
+        .join(', ');
 
-                }}
-                source={{
-                  uri: videoUri,
-                }}
-                resizeMode={ResizeMode.COVER}
-                isLooping
-                onPlaybackStatusUpdate={status => setStatus(() => status)}
-              />
-            </TouchableOpacity>
-          </View>  
-        )
-        :
-        
-        <CameraView mode="video" ref={cameraRef} style={{flex: 1}} facing={facing}>
-          <View style={{flex: 1, justifyContent: 'flex-end'}}>
-            <View style={{flexDirection: 'row', alignItems: 'center', justifyContent: 'space-around', marginBottom: 40}}>
-              <TouchableOpacity onPress={pickImage}>
-                <Ionicons name="aperture" size={50} color="white" />
-              </TouchableOpacity>
-              {videoUri ? (
-                <TouchableOpacity onPress={saveVideo}>
-                  <Ionicons name="checkmark-circle" size={100} color="white" />
-                </TouchableOpacity>
-              ) : (
-                <TouchableOpacity onPress={recordVideo}>
-                  {!isRecording ? <Ionicons name="radio-button-on" size={100} color="white" /> : <Ionicons name="pause-circle" size={100} color="red" />}
-                </TouchableOpacity>
-              )}
-              <TouchableOpacity onPress={toggleCameraFacing}>
-                <Ionicons name="camera-reverse" size={50} color="white" />
-              </TouchableOpacity>
-            </View>
-          </View>
-        </CameraView>
-        }
-      </View>
-    );
+      setLocation({
+        latitude: location.coords.latitude,
+        longitude: location.coords.longitude,
+        address: locationString,
+      });
+
+      // Create live stream post with location
+      if (user) {
+        await createLiveStream(
+          user.id,
+          `rtmp://your-streaming-server/live/${postId}`,
+          locationString,
+          location.coords.latitude,
+          location.coords.longitude
+        );
+      }
+    } catch (error) {
+      console.error('Error getting location:', error);
+      alert('Failed to get location. Please try again.');
+    }
+  };
+
+  const handleViewerCountChange = (count: number) => {
+    console.log(`Viewer count changed: ${count}`);
+  };
+
+  if (!location) {
+    return null; // Don't show camera until we have location
+  }
+
+  return (
+    <View className="flex-1 bg-black">
+      {user && (
+        <LiveStream
+          postId={postId}
+          userId={user.id}
+          isStreamer={true}
+          onViewerCountChange={handleViewerCountChange}
+        />
+      )}
+    </View>
+  );
 }
-
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    justifyContent: 'center',
-  },
-  message: {
-    textAlign: 'center',
-    paddingBottom: 10,
-  },
-  camera: {
-    flex: 1,
-  },
-  buttonContainer: {
-    flex: 1,
-    flexDirection: 'row',
-    backgroundColor: 'transparent',
-    margin: 64,
-  },
-  button: {
-    flex: 1,
-    alignSelf: 'flex-end',
-    alignItems: 'center',
-  },
-  text: {
-    fontSize: 24,
-    fontWeight: 'bold',
-    color: 'white',
-  },
-});

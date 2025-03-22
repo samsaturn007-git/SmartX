@@ -16,23 +16,26 @@ datasource db {
 }
 
 model User {
-  id         String     @id @unique
-  username   String     @unique
-  email      String     @unique
-  created_at DateTime   @default(now())
+  id         String      @id @unique @db.Uuid
+  username   String      @unique
+  email      String      @unique
+  created_at DateTime    @default(now())
   videos     Video[]
   likes      Like[]
   followers  Follower[]
   comments   Comment[]
   chats      Chat[]
   Report     Report[]
+  posts      Post[]
+  postVotes  PostVote[]
+  liveViews  LiveViewer[]
 }
 
 model Video {
-  id         String    @id @default(dbgenerated("uuid_generate_v4()"))
+  id         String    @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
   title      String
   uri        String
-  user_id    String
+  user_id    String    @db.Uuid
   user       User      @relation(fields: [user_id], references: [id], onDelete: Cascade)
   likes      Like[]
   created_at DateTime  @default(now())
@@ -41,28 +44,28 @@ model Video {
 }
 
 model Like {
-  id            String   @id @default(dbgenerated("uuid_generate_v4()"))
-  user_id       String
+  id            String   @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  user_id       String   @db.Uuid
   user          User     @relation(fields: [user_id], references: [id], onDelete: Cascade)
-  video_id      String
+  video_id      String   @db.Uuid
   video         Video    @relation(fields: [video_id], references: [id], onDelete: Cascade)
   video_user_id String
   created_at    DateTime @default(now())
 }
 
 model Follower {
-  id               String   @id @default(dbgenerated("uuid_generate_v4()"))
-  user_id          String
+  id               String   @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  user_id          String   @db.Uuid
   user             User     @relation(fields: [user_id], references: [id], onDelete: Cascade)
   follower_user_id String
   created_at       DateTime @default(now())
 }
 
 model Comment {
-  id            String   @id @default(dbgenerated("uuid_generate_v4()"))
-  user_id       String
+  id            String   @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  user_id       String   @db.Uuid
   user          User     @relation(fields: [user_id], references: [id], onDelete: Cascade)
-  video_id      String
+  video_id      String   @db.Uuid
   video         Video    @relation(fields: [video_id], references: [id], onDelete: Cascade)
   video_user_id String
   text          String
@@ -70,8 +73,8 @@ model Comment {
 }
 
 model Chat {
-  id           String   @id @default(dbgenerated("uuid_generate_v4()"))
-  user_id      String
+  id           String   @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  user_id      String   @db.Uuid
   user         User     @relation(fields: [user_id], references: [id], onDelete: Cascade)
   chat_user_id String
   users_key    String
@@ -80,10 +83,51 @@ model Chat {
 }
 
 model Report {
-  id         String   @id @default(dbgenerated("uuid_generate_v4()"))
-  user_id    String?
+  id         String   @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  user_id    String?  @db.Uuid
   user       User?    @relation(fields: [user_id], references: [id], onDelete: Cascade)
-  video_id   String?
+  video_id   String?  @db.Uuid
   video      Video?   @relation(fields: [video_id], references: [id], onDelete: Cascade)
   created_at DateTime @default(now())
+}
+
+model Post {
+  id          String      @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  type        String      // 'video' or 'image'
+  url         String
+  caption     String
+  issue_type  String      // 'environmental_hazard' or 'accident'
+  latitude    Float
+  longitude   Float
+  location    String
+  is_live     Boolean     @default(false)
+  stream_id   String?
+  stream_url  String?
+  started_at  DateTime?
+  user_id     String      @db.Uuid
+  user        User        @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  created_at  DateTime    @default(now())
+  post_votes  PostVote[]
+  live_viewers LiveViewer[]
+}
+
+model PostVote {
+  id         String   @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  post_id    String   @db.Uuid
+  post       Post     @relation(fields: [post_id], references: [id], onDelete: Cascade)
+  user_id    String   @db.Uuid
+  user       User     @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  vote_type  String   // 'up' or 'down'
+  created_at DateTime @default(now())
+
+  @@unique([post_id, user_id])
+}
+
+model LiveViewer {
+  id         String   @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  post_id    String   @db.Uuid
+  post       Post     @relation(fields: [post_id], references: [id], onDelete: Cascade)
+  user_id    String   @db.Uuid
+  user       User     @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  joined_at  DateTime @default(now())
 }
