@@ -24,27 +24,62 @@ CREATE INDEX IF NOT EXISTS "LiveViewer_post_id_idx" ON "public"."LiveViewer"("po
 ALTER TABLE "public"."LiveViewer" ENABLE ROW LEVEL SECURITY;
 
 -- Add RLS policies for LiveViewer
-CREATE POLICY IF NOT EXISTS "Enable read access for all users"
-    ON "public"."LiveViewer"
-    FOR SELECT
-    USING (true);
+DO $$ 
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_policies 
+        WHERE schemaname = 'public' 
+        AND tablename = 'LiveViewer' 
+        AND policyname = 'Enable read access for all users'
+    ) THEN
+        CREATE POLICY "Enable read access for all users"
+            ON "public"."LiveViewer"
+            FOR SELECT
+            USING (true);
+    END IF;
 
-CREATE POLICY IF NOT EXISTS "Enable insert for authenticated users only"
-    ON "public"."LiveViewer"
-    FOR INSERT
-    WITH CHECK (auth.role() = 'authenticated');
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_policies 
+        WHERE schemaname = 'public' 
+        AND tablename = 'LiveViewer' 
+        AND policyname = 'Enable insert for authenticated users only'
+    ) THEN
+        CREATE POLICY "Enable insert for authenticated users only"
+            ON "public"."LiveViewer"
+            FOR INSERT
+            WITH CHECK (auth.role() = 'authenticated');
+    END IF;
 
-CREATE POLICY IF NOT EXISTS "Enable delete for own records"
-    ON "public"."LiveViewer"
-    FOR DELETE
-    USING (auth.uid() = user_id);
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_policies 
+        WHERE schemaname = 'public' 
+        AND tablename = 'LiveViewer' 
+        AND policyname = 'Enable delete for own records'
+    ) THEN
+        CREATE POLICY "Enable delete for own records"
+            ON "public"."LiveViewer"
+            FOR DELETE
+            USING (auth.uid() = user_id);
+    END IF;
 
--- Add RLS policies for Post table live streaming
-CREATE POLICY IF NOT EXISTS "Enable live stream updates for own posts"
-    ON "public"."Post"
-    FOR UPDATE
-    USING (auth.uid() = user_id);
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_policies 
+        WHERE schemaname = 'public' 
+        AND tablename = 'Post' 
+        AND policyname = 'Enable live stream updates for own posts'
+    ) THEN
+        CREATE POLICY "Enable live stream updates for own posts"
+            ON "public"."Post"
+            FOR UPDATE
+            USING (auth.uid() = user_id);
+    END IF;
+END $$;
 
 -- Grant necessary permissions
-GRANT ALL ON "public"."LiveViewer" TO authenticated;
-GRANT ALL ON "public"."Post" TO authenticated;
+DO $$ 
+BEGIN
+    EXECUTE 'GRANT ALL ON "public"."LiveViewer" TO authenticated';
+    EXECUTE 'GRANT ALL ON "public"."Post" TO authenticated';
+EXCEPTION 
+    WHEN OTHERS THEN NULL;
+END $$;

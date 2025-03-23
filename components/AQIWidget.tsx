@@ -11,14 +11,37 @@ interface AQIWidgetProps {
     status: string;
     hourlyData: number[];
     times: string[];
+    prediction?: {
+      nextHour: number;
+      nextDay: number;
+      confidence: number;
+    };
   };
+  city: string;
 }
 
-export default function AQIWidget({ data }: AQIWidgetProps) {
+export default function AQIWidget({ data, city }: AQIWidgetProps) {
   const router = useRouter();
-  const width = Dimensions.get('window').width - 48; // Account for padding
+  const width = Dimensions.get('window').width - 40;
   const [pressed, setPressed] = React.useState(false);
   const scale = React.useRef(new Animated.Value(1)).current;
+  const chartOpacity = React.useRef(new Animated.Value(0)).current;
+  const chartScale = React.useRef(new Animated.Value(0.9)).current;
+
+  React.useEffect(() => {
+    // Animate chart entry
+    Animated.parallel([
+      Animated.timing(chartOpacity, {
+        toValue: 1,
+        duration: 500,
+        useNativeDriver: true,
+      }),
+      Animated.spring(chartScale, {
+        toValue: 1,
+        useNativeDriver: true,
+      })
+    ]).start();
+  }, []);
 
   const onPressIn = () => {
     setPressed(true);
@@ -66,83 +89,137 @@ export default function AQIWidget({ data }: AQIWidgetProps) {
       <TouchableOpacity
         onPressIn={onPressIn}
         onPressOut={onPressOut}
-        onPress={() => router.push('/air-quality' as any)}
+        onPress={() => router.push({ pathname: '/air-quality', params: { city } })}
         activeOpacity={1}
       >
-        <View className="p-6 rounded-3xl bg-sky-600">
+        <View 
+          className="rounded-3xl overflow-hidden"
+          style={{
+            borderWidth: 2,
+            borderColor: '#2563EB',
+            backgroundColor: 'white'
+          }}
+        >
           {/* Header */}
-          <View className="flex-row justify-between items-center mb-2">
-            <Text className="text-white font-semibold text-lg">Air Quality</Text>
-            <MaterialCommunityIcons name="air-filter" size={20} color="white" />
+          <View className="px-4 pt-4 flex-row justify-between items-center mb-2">
+            <View>
+              <Text className="text-sky-600 font-semibold text-lg">Air Quality</Text>
+              <Text className="text-sky-600/70 text-sm">{city}</Text>
+            </View>
+            <MaterialCommunityIcons name="air-filter" size={20} color="#2563EB" />
           </View>
 
           {/* Chart */}
-          <View className="mt-2">
-            <LineChart
-              data={{
-                labels: data.times,
-                datasets: [{
-                  data: data.hourlyData
-                }]
-              }}
-              width={width - 48}
-              height={100}
-              withDots={true}
-              withInnerLines={true}
-              withOuterLines={true}
-              withVerticalLabels={true}
-              withHorizontalLabels={true}
-              chartConfig={{
-                backgroundColor: 'transparent',
-                backgroundGradientFrom: 'transparent',
-                backgroundGradientTo: 'transparent',
-                decimalPlaces: 0,
-                color: (opacity = 1) => `rgba(255, 255, 255, ${opacity})`,
-                labelColor: (opacity = 1) => `rgba(255, 255, 255, ${opacity})`,
-                style: {
-                  borderRadius: 16
-                },
-                propsForDots: {
-                  r: "4",
-                  strokeWidth: "2",
-                  stroke: "#fff"
-                },
-                strokeWidth: 3,
-                propsForBackgroundLines: {
-                  strokeWidth: 1,
-                  stroke: "rgba(255, 255, 255, 0.1)"
-                }
-              }}
-              bezier
+          <View className="mb-4 px-[5px]">
+            <Animated.View
               style={{
-                marginVertical: 8,
-                borderRadius: 16
+                opacity: chartOpacity,
+                transform: [{ scale: chartScale }]
               }}
-            />
+            >
+              <LineChart
+                data={{
+                  labels: data.times,
+                  datasets: [{
+                    data: data.hourlyData,
+                    color: (opacity = 1) => `rgba(37, 99, 235, ${opacity})`,
+                    strokeWidth: 3
+                  }]
+                }}
+                width={width - 10}
+                height={180}
+                withDots={true}
+                withInnerLines={true}
+                withOuterLines={true}
+                withVerticalLabels={true}
+                withHorizontalLabels={true}
+                chartConfig={{
+                  backgroundColor: 'transparent',
+                  backgroundGradientFrom: 'transparent',
+                  backgroundGradientTo: 'transparent',
+                  decimalPlaces: 0,
+                  color: (opacity = 1) => `rgba(37, 99, 235, ${opacity})`,
+                  labelColor: (opacity = 1) => `rgba(37, 99, 235, ${opacity})`,
+                  style: {
+                    borderRadius: 0
+                  },
+                  propsForDots: {
+                    r: "5",
+                    strokeWidth: "2",
+                    stroke: "#2563EB",
+                    fill: "white"
+                  },
+                  strokeWidth: 3,
+                  propsForBackgroundLines: {
+                    strokeWidth: 1,
+                    stroke: "rgba(37, 99, 235, 0.1)"
+                  },
+                  propsForLabels: {
+                    fontSize: 10
+                  }
+                }}
+                bezier
+                style={{
+                  marginVertical: 0,
+                  borderRadius: 0,
+                  paddingRight: 0
+                }}
+              />
+            </Animated.View>
           </View>
 
-          {/* Status */}
-          <View className="flex-row items-center justify-between mt-2">
-            <View
-              style={{ backgroundColor: `${statusColor}30` }}
-              className="px-3 py-1.5 rounded-full"
-            >
-              <Text style={{ color: statusColor }} className="font-bold text-lg">
-                {data.current}
-              </Text>
-            </View>
-            <View className="flex-row items-center">
+          {/* Status and Prediction */}
+          <View className="px-4 mb-4">
+            {/* Current AQI */}
+            <View className="flex-row items-center justify-between">
               <View
-                style={{ backgroundColor: statusColor }}
-                className="w-2 h-2 rounded-full mr-2"
-              />
-              <Text className="text-white opacity-90">{data.status}</Text>
+                style={{ backgroundColor: `${statusColor}30` }}
+                className="px-3 py-1.5 rounded-full"
+              >
+                <Text style={{ color: statusColor }} className="font-bold text-lg">
+                  {data.current}
+                </Text>
+              </View>
+              <View className="flex-row items-center">
+                <View
+                  style={{ backgroundColor: statusColor }}
+                  className="w-2 h-2 rounded-full mr-2"
+                />
+                <Text className="text-sky-600 opacity-90">{data.status}</Text>
+              </View>
             </View>
+
+            {/* Prediction */}
+            {data.prediction && (
+              <View className="mt-3 bg-sky-50 rounded-lg p-3">
+                <Text className="text-sky-600/80 text-sm mb-2">AI Prediction</Text>
+                <View className="flex-row justify-between">
+                  <View>
+                    <Text className="text-sky-600/60 text-xs">Next Hour</Text>
+                    <Text className="text-sky-600 font-semibold">
+                      {data.prediction.nextHour} AQI
+                    </Text>
+                  </View>
+                  <View>
+                    <Text className="text-sky-600/60 text-xs">Next Day</Text>
+                    <Text className="text-sky-600 font-semibold">
+                      {data.prediction.nextDay} AQI
+                    </Text>
+                  </View>
+                  <View>
+                    <Text className="text-sky-600/60 text-xs">Confidence</Text>
+                    <Text className="text-sky-600 font-semibold">
+                      {Math.round(data.prediction.confidence * 100)}%
+                    </Text>
+                  </View>
+                </View>
+              </View>
+            )}
           </View>
 
           {/* Interaction Hint */}
-          <View className="flex-row items-center justify-center mt-3">
-            <Text className="text-white text-xs opacity-75">Tap for details</Text>
+          <View className="flex-row items-center justify-center pb-4 px-4">
+            <Text className="text-sky-600/75 text-xs">Tap for details</Text>
           </View>
         </View>
       </TouchableOpacity>

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { View, Text, TouchableOpacity, Image, TextInput, ScrollView, Platform } from 'react-native';
 import Header from '@/components/header';
 import { useAuth } from '@/providers/AuthProvider';
@@ -8,44 +8,65 @@ import * as ImagePicker from 'expo-image-picker';
 import * as FileSystem from 'expo-file-system';
 import * as Location from 'expo-location';
 import { decode } from 'base64-arraybuffer';
-import { supabase, getPosts, createPost, getPostVotes } from '@/utils/supabase';
+import { supabase, getPosts, createPost, getPostVotes, Post } from '@/utils/supabase';
 import { FeedPost } from '@/components/FeedPost';
-import { LiveStream } from '@/components/LiveStream';
-
-interface Post {
-  id: string;
-  type: 'video' | 'image';
-  url: string;
-  caption: string;
-  issue_type: 'environmental_hazard' | 'accident';
-  latitude: number;
-  longitude: number;
-  location: string;
-  is_live?: boolean;
-  stream_url?: string;
-  PostVote?: { vote_type: 'up' | 'down', user_id: string }[];
-}
+import { useLocalSearchParams } from 'expo-router';
+import { User } from '@supabase/supabase-js';
+import { useMcpTool } from '@/hooks/useMcpTool';
+import { LinearGradient } from 'expo-linear-gradient';
 
 type IssueType = 'environmental_hazard' | 'accident';
+type SortOption = 'upvotes' | 'downvotes' | 'newest';
+type VoteType = 'up' | 'down' | null;
 
-export default function () {
+interface LocationState {
+  latitude: number;
+  longitude: number;
+  address: string;
+  accuracy?: number | undefined;
+}
+
+interface VoteCounts {
+  upvotes: number;
+  downvotes: number;
+  userVote: VoteType;
+}
+
+export default function FeedbackScreen() {
+  const { selectedPostId } = useLocalSearchParams<{ selectedPostId: string }>();
+  const scrollViewRef = useRef<ScrollView>(null);
+  const postRefs = useRef<{ [key: string]: View | null }>({});
+  
   const { user } = useAuth();
   const [media, setMedia] = useState<string | null>(null);
   const [mediaType, setMediaType] = useState<'video' | 'image'>('image');
   const [caption, setCaption] = useState('');
   const [issueType, setIssueType] = useState<IssueType>('environmental_hazard');
-  const [location, setLocation] = useState<{
-    latitude: number;
-    longitude: number;
-    address: string;
-  } | null>(null);
+  const [location, setLocation] = useState<LocationState | null>(null);
   const [uploading, setUploading] = useState(false);
   const [posts, setPosts] = useState<Post[]>([]);
   const [refreshing, setRefreshing] = useState(false);
+  const [sortBy, setSortBy] = useState<SortOption>('upvotes');
 
   useEffect(() => {
     loadPosts();
   }, []);
+
+  useEffect(() => {
+    if (selectedPostId && posts.length > 0) {
+      const selectedPost = postRefs.current[selectedPostId];
+      if (selectedPost && scrollViewRef.current) {
+        setTimeout(() => {
+          selectedPost.measure((x, y, width, height, pageX, pageY) => {
+            scrollViewRef.current?.scrollTo({
+              y: pageY - 100,
+              animated: true
+            });
+          });
+        }, 500);
+      }
+    }
+  }, [selectedPostId, posts]);
 
   const loadPosts = async () => {
     try {
@@ -64,7 +85,10 @@ export default function () {
         return;
       }
 
-      const location = await Location.getCurrentPositionAsync({});
+      const location = await Location.getCurrentPositionAsync({
+        accuracy: Location.Accuracy.BestForNavigation
+      });
+
       const [address] = await Location.reverseGeocodeAsync({
         latitude: location.coords.latitude,
         longitude: location.coords.longitude,
@@ -83,7 +107,12 @@ export default function () {
         latitude: location.coords.latitude,
         longitude: location.coords.longitude,
         address: locationString,
+        accuracy: location.coords.accuracy || undefined
       });
+
+      if (location.coords.accuracy) {
+        alert(`Location accuracy: ${Math.round(location.coords.accuracy)} meters`);
+      }
     } catch (error) {
       console.error('Error getting location:', error);
       alert('Failed to get location. Please try again.');
@@ -104,12 +133,37 @@ export default function () {
         allowsEditing: true,
         aspect: [4, 3],
         quality: 1,
+        exif: true
       });
 
       if (!result.canceled) {
         setMedia(result.assets[0].uri);
         setMediaType(result.assets[0].type === 'video' ? 'video' : 'image');
-        getCurrentLocation();
+        
+        const asset = result.assets[0];
+        if (asset.exif?.GPSLatitude && asset.exif?.GPSLongitude) {
+          const [address] = await Location.reverseGeocodeAsync({
+            latitude: asset.exif.GPSLatitude,
+            longitude: asset.exif.GPSLongitude,
+          });
+
+          const locationString = [
+            address.street,
+            address.city,
+            address.region,
+            address.country,
+          ]
+            .filter(Boolean)
+            .join(', ');
+
+          setLocation({
+            latitude: asset.exif.GPSLatitude,
+            longitude: asset.exif.GPSLongitude,
+            address: locationString
+          });
+        } else {
+          getCurrentLocation();
+        }
       }
     } catch (error) {
       console.error('Error picking media:', error);
@@ -131,6 +185,7 @@ export default function () {
         allowsEditing: true,
         aspect: [4, 3],
         quality: 1,
+        exif: true
       });
 
       if (!result.canceled) {
@@ -158,7 +213,6 @@ export default function () {
       const fileName = `${Date.now()}.${fileExt}`;
       const filePath = `${user.id}/${fileName}`;
 
-      // For web platform
       if (Platform.OS === 'web') {
         const response = await fetch(media);
         if (!response.ok) {
@@ -175,7 +229,6 @@ export default function () {
 
         if (uploadError) throw uploadError;
       } else {
-        // For mobile platforms
         const base64 = await FileSystem.readAsStringAsync(media, {
           encoding: FileSystem.EncodingType.Base64,
         });
@@ -228,195 +281,231 @@ export default function () {
     }
   };
 
-  const getVoteCounts = (post: Post) => {
+  const getVoteCounts = (post: Post): VoteCounts => {
     const votes = post.PostVote || [];
     const upvotes = votes.filter(v => v.vote_type === 'up').length;
     const downvotes = votes.filter(v => v.vote_type === 'down').length;
-    const userVote = user ? votes.find(v => v.user_id === user.id)?.vote_type : null;
+    const userVote = user ? (votes.find(v => v.user_id === user.id)?.vote_type as VoteType) || null : null;
     return { upvotes, downvotes, userVote };
   };
 
-  // Separate live streams from regular posts
-  const liveStreams = posts.filter(post => post.is_live);
-  const regularPosts = posts.filter(post => !post.is_live);
+  const sortPosts = (postsToSort: Post[]): Post[] => {
+    return [...postsToSort].sort((a, b) => {
+      const aVotes = getVoteCounts(a);
+      const bVotes = getVoteCounts(b);
+
+      switch (sortBy) {
+        case 'upvotes':
+          return bVotes.upvotes - aVotes.upvotes;
+        case 'downvotes':
+          return bVotes.downvotes - aVotes.downvotes;
+        case 'newest':
+          return parseInt(b.id) - parseInt(a.id);
+        default:
+          return 0;
+      }
+    });
+  };
+
+  const renderLocationInfo = () => {
+    if (!location) {
+      return <Text className="text-gray-400">Add location (required)</Text>;
+    }
+    
+    return (
+      <View>
+        <Text className="text-gray-300">{location.address}</Text>
+        <Text className="text-xs text-gray-400">
+          {`Lat: ${location.latitude.toFixed(6)}, Long: ${location.longitude.toFixed(6)}`}
+          {location.accuracy ? ` (±${Math.round(location.accuracy)}m)` : ''}
+        </Text>
+      </View>
+    );
+  };
 
   return (
-    <ScrollView className="flex-1 bg-white">
-      <View className='absolute top-10 left-0 right-0 z-10'>
-        <Header title="Community Feed" color="white" search={false}/>
-      </View>
-      
-      <SafeAreaView className='flex-1 px-4 pt-20'>
-        {/* Live Streams Section */}
-        {liveStreams.length > 0 && (
-          <View className="mb-4">
-            <Text className="text-lg font-bold mb-4">Live Now</Text>
-            <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-              {liveStreams.map(stream => (
-                <View key={stream.id} className="mr-4 w-64">
-                  <LiveStream
-                    postId={stream.id}
-                    userId={user?.id || ''}
-                    isStreamer={false}
-                  />
-                  <View className="mt-2">
-                    <Text className="text-sm text-gray-500">{stream.location}</Text>
+    <View className="flex-1 bg-gray-900">
+      <LinearGradient
+        colors={['rgba(37, 99, 235, 0.2)', 'rgba(0, 0, 0, 0)']}
+        style={{ position: 'absolute', width: '100%', height: 400 }}
+        start={{ x: 0, y: 0 }}
+        end={{ x: 0, y: 1 }}
+      />
+      <ScrollView 
+        ref={scrollViewRef}
+        className="flex-1"
+        showsVerticalScrollIndicator={false}
+      >
+        <View className='absolute top-12 left-0 right-0 z-10 px-4'>
+          <Header title="Community Feed" color="white" search={false} showCitySelector={false}/>
+        </View>
+        
+        <SafeAreaView className='flex-1 px-5 pt-16'>
+          {/* Upload Section */}
+          <View className="bg-gray-800/90 rounded-xl p-6 mb-6 shadow-xl shadow-blue-500/20">
+            <View className="flex-row items-center mb-4">
+              <Ionicons name="alert-circle" size={24} color="#60A5FA" />
+              <View className="ml-3">
+                <Text className="text-white text-lg font-bold">Report an Issue</Text>
+                <Text className="text-gray-400 text-sm">
+                  Share environmental hazards or accidents
+                </Text>
+              </View>
+            </View>
+
+            <View className="flex-row justify-around mb-4">
+              <TouchableOpacity 
+                onPress={takeMedia}
+                className="items-center bg-blue-600 rounded-2xl p-4 w-36 shadow-lg shadow-blue-500/30"
+              >
+                <Ionicons name="camera" size={24} color="white" />
+                <Text className="text-white mt-2 font-medium">Capture</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity 
+                onPress={pickMedia}
+                className="items-center bg-blue-700 rounded-2xl p-4 w-36 shadow-lg shadow-blue-500/30"
+              >
+                <Ionicons name="images" size={24} color="white" />
+                <Text className="text-white mt-2 font-medium">Upload</Text>
+              </TouchableOpacity>
+            </View>
+
+            {media && (
+              <View className="items-center">
+                {mediaType === 'image' ? (
+                  <View className="w-full rounded-xl overflow-hidden shadow-xl shadow-black/50 mb-4">
+                    <Image 
+                      source={{ uri: media }} 
+                      className="w-full h-48"
+                      resizeMode="cover"
+                    />
+                  </View>
+                ) : (
+                  <View className="w-full h-48 rounded-xl mb-4 bg-black justify-center items-center shadow-xl shadow-black/50">
+                    <Ionicons name="videocam" size={48} color="white" />
+                    <Text className="text-white mt-2">Video Selected</Text>
+                  </View>
+                )}
+
+                <View className="w-full mb-4">
+                  <Text className="text-blue-400 mb-2 font-medium">Issue Type</Text>
+                  <View className="flex-row justify-around">
+                    <TouchableOpacity 
+                      onPress={() => setIssueType('environmental_hazard')}
+                      className={`px-4 py-3 rounded-xl shadow-lg ${
+                        issueType === 'environmental_hazard' 
+                          ? 'bg-green-600 shadow-green-500/30' 
+                          : 'bg-gray-700 shadow-black/20'
+                      }`}
+                    >
+                      <Text className="text-white font-medium">
+                        Environmental Hazard
+                      </Text>
+                    </TouchableOpacity>
+
+                    <TouchableOpacity 
+                      onPress={() => setIssueType('accident')}
+                      className={`px-4 py-3 rounded-xl shadow-lg ${
+                        issueType === 'accident' 
+                          ? 'bg-red-600 shadow-red-500/30' 
+                          : 'bg-gray-700 shadow-black/20'
+                      }`}
+                    >
+                      <Text className="text-white font-medium">
+                        Accident
+                      </Text>
+                    </TouchableOpacity>
                   </View>
                 </View>
-              ))}
-            </ScrollView>
-          </View>
-        )}
 
-        {/* Upload Section */}
-        <View className="bg-gray-50 rounded-xl p-6 mb-4">
-          <Text className="text-lg font-bold mb-2">Report an Issue</Text>
-          <Text className="text-gray-600 mb-4">
-            Take a photo/video or upload from your gallery to report accidents or environmental issues
-          </Text>
+                <View className="w-full mb-4">
+                  <Text className="text-blue-400 mb-2 font-medium">Location</Text>
+                  <TouchableOpacity 
+                    onPress={getCurrentLocation}
+                    className="flex-row items-center bg-gray-700/80 rounded-xl p-4 border border-gray-600/50 shadow-lg shadow-black/20"
+                  >
+                    <Ionicons 
+                      name="location" 
+                      size={20} 
+                      color={location ? '#60A5FA' : '#9CA3AF'} 
+                    />
+                    <View className="ml-3 flex-1">
+                      {renderLocationInfo()}
+                    </View>
+                  </TouchableOpacity>
+                </View>
 
-          <View className="flex-row justify-around mb-4">
-            <TouchableOpacity 
-              onPress={takeMedia}
-              className="items-center bg-black rounded-full p-4"
-            >
-              <Ionicons name="camera" size={24} color="white" />
-              <Text className="text-white mt-1">Capture</Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity 
-              onPress={pickMedia}
-              className="items-center bg-gray-800 rounded-full p-4"
-            >
-              <Ionicons name="images" size={24} color="white" />
-              <Text className="text-white mt-1">Upload</Text>
-            </TouchableOpacity>
-          </View>
-
-          {media && (
-            <View className="items-center">
-              {mediaType === 'image' ? (
-                <Image 
-                  source={{ uri: media }} 
-                  className="w-full h-48 rounded-lg mb-4"
-                  resizeMode="cover"
+                <TextInput
+                  className="w-full bg-gray-700/80 rounded-xl p-4 mb-4 text-white shadow-lg shadow-black/20"
+                  placeholder="Add a caption..."
+                  placeholderTextColor="#9CA3AF"
+                  value={caption}
+                  onChangeText={setCaption}
+                  multiline
                 />
-              ) : (
-                <View className="w-full h-48 rounded-lg mb-4 bg-black justify-center items-center">
-                  <Ionicons name="videocam" size={48} color="white" />
-                  <Text className="text-white mt-2">Video Selected</Text>
-                </View>
-              )}
 
-              <View className="w-full mb-4">
-                <Text className="text-gray-700 mb-2">Issue Type:</Text>
-                <View className="flex-row justify-around">
-                  <TouchableOpacity 
-                    onPress={() => setIssueType('environmental_hazard')}
-                    className={`px-4 py-2 rounded-full ${
-                      issueType === 'environmental_hazard' 
-                        ? 'bg-green-500' 
-                        : 'bg-gray-300'
-                    }`}
-                  >
-                    <Text className={`${
-                      issueType === 'environmental_hazard' 
-                        ? 'text-white' 
-                        : 'text-gray-700'
-                    }`}>
-                      Environmental Hazard
-                    </Text>
-                  </TouchableOpacity>
-
-                  <TouchableOpacity 
-                    onPress={() => setIssueType('accident')}
-                    className={`px-4 py-2 rounded-full ${
-                      issueType === 'accident' 
-                        ? 'bg-red-500' 
-                        : 'bg-gray-300'
-                    }`}
-                  >
-                    <Text className={`${
-                      issueType === 'accident' 
-                        ? 'text-white' 
-                        : 'text-gray-700'
-                    }`}>
-                      Accident
-                    </Text>
-                  </TouchableOpacity>
-                </View>
-              </View>
-
-              <View className="w-full mb-4">
-                <Text className="text-gray-700 mb-2">Location:</Text>
                 <TouchableOpacity 
-                  onPress={getCurrentLocation}
-                  className="flex-row items-center bg-white rounded-lg p-3 border border-gray-200"
+                  onPress={uploadMedia}
+                  disabled={uploading || !caption || !location}
+                  className={`bg-blue-600 px-8 py-4 rounded-xl shadow-lg shadow-blue-500/30 ${
+                    (uploading || !caption || !location) ? 'opacity-50' : ''
+                  }`}
                 >
-                  <Ionicons 
-                    name="location" 
-                    size={20} 
-                    color={location ? '#3B82F6' : '#6B7280'} 
-                  />
-                  <Text className="ml-2 flex-1 text-gray-600">
-                    {location ? location.address : 'Add location (required)'}
+                  <Text className="text-white font-semibold text-lg">
+                    {uploading ? 'Uploading...' : 'Submit Report'}
                   </Text>
                 </TouchableOpacity>
               </View>
+            )}
+          </View>
 
-              <TextInput
-                className="w-full bg-white rounded-lg p-3 mb-4"
-                placeholder="Add a caption..."
-                value={caption}
-                onChangeText={setCaption}
-                multiline
-              />
-
-              <TouchableOpacity 
-                onPress={uploadMedia}
-                disabled={uploading || !caption || !location}
-                className={`bg-blue-500 px-6 py-3 rounded-full ${
-                  (uploading || !caption || !location) ? 'opacity-50' : ''
-                }`}
-              >
-                <Text className="text-white font-semibold">
-                  {uploading ? 'Uploading...' : 'Submit Report'}
-                </Text>
-              </TouchableOpacity>
+          {/* Community Reports Section */}
+          <View className="mb-4">
+            <View className="flex-row items-center mb-6">
+              <Ionicons name="people" size={24} color="#60A5FA" />
+              <Text className="text-white text-xl font-bold ml-3">Community Reports</Text>
             </View>
-          )}
-        </View>
-
-        {/* Regular Posts Section */}
-        <View className="mb-4">
-          <Text className="text-lg font-bold mb-4">Community Reports</Text>
-          {regularPosts.length > 0 ? (
-            regularPosts.map(post => {
-              const { upvotes, downvotes, userVote } = getVoteCounts(post);
-              return (
-                <FeedPost
-                  key={post.id}
-                  id={post.id}
-                  type={post.type}
-                  url={post.url}
-                  caption={post.caption}
-                  upvotes={upvotes}
-                  downvotes={downvotes}
-                  userVote={userVote}
-                  onVoteChange={loadPosts}
-                  issue_type={post.issue_type}
-                  location={post.location}
-                />
-              );
-            })
-          ) : (
-            <View className="items-center justify-center py-8 bg-gray-50 rounded-xl">
-              <Ionicons name="document-text-outline" size={48} color="gray" />
-              <Text className="text-gray-500 mt-2">No reports yet</Text>
-            </View>
-          )}
-        </View>
-      </SafeAreaView>
-    </ScrollView>
+            {posts.length > 0 ? (
+              <View className="space-y-4">
+                {sortPosts(posts).map(post => {
+                  const { upvotes, downvotes, userVote } = getVoteCounts(post);
+                  return (
+                    <View
+                      key={post.id}
+                      ref={ref => postRefs.current[post.id] = ref}
+                      className={`shadow-xl shadow-blue-500/20 ${
+                        post.id === selectedPostId ? 'border-2 border-blue-500 rounded-xl' : ''
+                      }`}
+                    >
+                      <FeedPost
+                        id={post.id}
+                        type={post.type}
+                        url={post.url}
+                        caption={post.caption}
+                        upvotes={upvotes}
+                        downvotes={downvotes}
+                        userVote={userVote}
+                        onVoteChange={loadPosts}
+                        issue_type={post.issue_type}
+                        location={post.location}
+                        latitude={post.latitude}
+                        longitude={post.longitude}
+                      />
+                    </View>
+                  );
+                })}
+              </View>
+            ) : (
+              <View className="items-center justify-center py-12 bg-gray-800/90 rounded-xl shadow-xl shadow-blue-500/20">
+                <Ionicons name="document-text-outline" size={48} color="#60A5FA" />
+                <Text className="text-gray-300 mt-4 text-lg">No reports yet</Text>
+                <Text className="text-gray-400 mt-1">Be the first to report an issue</Text>
+              </View>
+            )}
+          </View>
+        </SafeAreaView>
+      </ScrollView>
+    </View>
   );
 }

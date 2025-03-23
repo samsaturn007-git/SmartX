@@ -1,9 +1,15 @@
-import React, { useState } from 'react';
-import { View, Text, Image, TouchableOpacity, StyleSheet, Dimensions } from 'react-native';
-import { Video, ResizeMode } from 'expo-av';
-import { supabase } from '../utils/supabase';
-import { useAuth } from '../providers/AuthProvider';
-import { Ionicons, FontAwesome } from '@expo/vector-icons';
+import React from 'react';
+import { View, Text, TouchableOpacity, Image } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
+import { supabase } from '@/utils/supabase';
+import { useAuth } from '@/providers/AuthProvider';
+import { useRouter } from 'expo-router';
+
+interface PostVote {
+  post_id: string;
+  user_id: string;
+  vote_type: 'up' | 'down';
+}
 
 interface FeedPostProps {
   id: string;
@@ -12,123 +18,152 @@ interface FeedPostProps {
   caption: string;
   upvotes: number;
   downvotes: number;
-  userVote?: 'up' | 'down' | null;
+  userVote: 'up' | 'down' | null;
   onVoteChange: () => void;
   issue_type: 'environmental_hazard' | 'accident';
   location: string;
+  latitude: number;
+  longitude: number;
 }
 
-export const FeedPost = ({ 
-  id, 
-  type, 
-  url, 
-  caption, 
-  upvotes, 
-  downvotes, 
+export function FeedPost({
+  id,
+  type,
+  url,
+  caption,
+  upvotes,
+  downvotes,
   userVote,
   onVoteChange,
   issue_type,
-  location
-}: FeedPostProps) => {
+  location,
+  latitude,
+  longitude
+}: FeedPostProps) {
   const { user } = useAuth();
-  const [isLoading, setIsLoading] = useState(false);
+  const router = useRouter();
 
   const handleVote = async (voteType: 'up' | 'down') => {
-    if (!user || isLoading) return;
-    setIsLoading(true);
+    if (!user) return;
 
     try {
       if (userVote === voteType) {
-        await supabase
+        // Remove vote if clicking the same button
+        const { error } = await supabase
           .from('PostVote')
           .delete()
           .eq('post_id', id)
           .eq('user_id', user.id);
+
+        if (error) throw error;
       } else {
-        await supabase
+        // If user has an existing vote, delete it first
+        if (userVote) {
+          const { error: deleteError } = await supabase
+            .from('PostVote')
+            .delete()
+            .eq('post_id', id)
+            .eq('user_id', user.id);
+
+          if (deleteError) throw deleteError;
+        }
+
+        // Add a small delay to ensure delete completes
+        await new Promise(resolve => setTimeout(resolve, 100));
+
+        // Then insert the new vote
+        const { error: insertError } = await supabase
           .from('PostVote')
-          .upsert({
+          .insert({
             post_id: id,
             user_id: user.id,
             vote_type: voteType
-          });
+          } as PostVote);
+
+        if (insertError) throw insertError;
       }
       onVoteChange();
     } catch (error) {
       console.error('Error voting:', error);
-    } finally {
-      setIsLoading(false);
+    }
+  };
+
+  const handleEmergencyPress = () => {
+    if (issue_type === 'accident') {
+      router.push({
+        pathname: '/',
+        params: { selectedPostId: id }
+      });
     }
   };
 
   return (
-    <View className="bg-white rounded-xl mb-4 overflow-hidden">
-      {type === 'video' ? (
-        <Video
-          source={{ uri: url }}
-          className="w-full h-64"
-          useNativeControls
-          resizeMode={ResizeMode.CONTAIN}
-          isLooping
-        />
-      ) : (
+    <TouchableOpacity 
+      onPress={handleEmergencyPress}
+      disabled={issue_type !== 'accident'}
+      className="bg-gray-800 rounded-xl p-4 mb-4"
+    >
+      {type === 'image' ? (
         <Image
           source={{ uri: url }}
-          className="w-full h-64"
+          className="w-full h-48 rounded-lg mb-4"
           resizeMode="cover"
         />
+      ) : (
+        <View className="w-full h-48 rounded-lg mb-4 bg-black justify-center items-center">
+          <Ionicons name="videocam" size={48} color="white" />
+          <Text className="text-white mt-2">Video Content</Text>
+        </View>
       )}
 
-      <View className="p-4">
-        <View className="flex-row justify-between items-center mb-2">
-          <View className={`px-3 py-1 rounded-full ${
-            issue_type === 'environmental_hazard' ? 'bg-green-100' : 'bg-red-100'
-          }`}>
-            <Text className={`${
-              issue_type === 'environmental_hazard' ? 'text-green-700' : 'text-red-700'
-            } text-sm font-medium`}>
-              {issue_type === 'environmental_hazard' ? 'Environmental Hazard' : 'Accident'}
-            </Text>
-          </View>
-        </View>
-
-        <View className="flex-row items-center mb-2">
-          <Ionicons name="location" size={16} color="#6B7280" />
-          <Text className="text-gray-600 text-sm ml-1">{location}</Text>
-        </View>
-
-        <Text className="text-gray-800 text-base mb-2">{caption}</Text>
-        
-        <View className="flex-row justify-between items-center">
-          <View className="flex-row space-x-4">
-            <TouchableOpacity 
-              onPress={() => handleVote('up')}
-              className="flex-row items-center space-x-1"
-              disabled={isLoading}
-            >
-              <FontAwesome 
-                name={userVote === 'up' ? 'thumbs-up' : 'thumbs-o-up'} 
-                size={20} 
-                color={userVote === 'up' ? '#3B82F6' : '#6B7280'} 
-              />
-              <Text className="text-gray-600">{upvotes}</Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity 
-              onPress={() => handleVote('down')}
-              className="flex-row items-center space-x-1"
-              disabled={isLoading}
-            >
-              <FontAwesome 
-                name={userVote === 'down' ? 'thumbs-down' : 'thumbs-o-down'} 
-                size={20} 
-                color={userVote === 'down' ? '#EF4444' : '#6B7280'} 
-              />
-              <Text className="text-gray-600">{downvotes}</Text>
-            </TouchableOpacity>
-          </View>
+      <View className="flex-row items-center mb-2">
+        <View
+          className={`px-3 py-1 rounded-full ${
+            issue_type === 'environmental_hazard' ? 'bg-green-600' : 'bg-red-600'
+          }`}
+        >
+          <Text className="text-white text-sm">
+            {issue_type === 'environmental_hazard'
+              ? 'Environmental Hazard'
+              : 'Accident'}
+          </Text>
         </View>
       </View>
-    </View>
+
+      <Text className="text-gray-300 mb-2">{caption}</Text>
+      
+      <View className="flex-row items-center mb-2">
+        <Ionicons name="location" size={16} color="#60A5FA" />
+        <Text className="text-gray-400 ml-1">{location}</Text>
+      </View>
+
+      <View className="flex-row items-center justify-between">
+        <View className="flex-row">
+          <TouchableOpacity
+            onPress={() => handleVote('up')}
+            className="flex-row items-center mr-4"
+          >
+            <Ionicons
+              name={userVote === 'up' ? 'arrow-up-circle' : 'arrow-up-circle-outline'}
+              size={24}
+              color={userVote === 'up' ? '#60A5FA' : '#9CA3AF'}
+            />
+            <Text className="text-gray-400 ml-1">{upvotes}</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            onPress={() => handleVote('down')}
+            className="flex-row items-center"
+          >
+            <Ionicons
+              name={userVote === 'down' ? 'arrow-down-circle' : 'arrow-down-circle-outline'}
+              size={24}
+              color={userVote === 'down' ? '#EF4444' : '#9CA3AF'}
+            />
+            <Text className="text-gray-400 ml-1">{downvotes}</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+    </TouchableOpacity>
   );
-};
+}

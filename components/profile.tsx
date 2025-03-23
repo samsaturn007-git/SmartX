@@ -1,204 +1,295 @@
-import React from 'react';
-import { Text, TouchableOpacity, View, Image, SafeAreaView, Dimensions, FlatList } from 'react-native';
-import { useAuth } from '@/providers/AuthProvider';
+import React, { useState, useEffect } from 'react';
+import { Text, TouchableOpacity, View, SafeAreaView, Modal, ScrollView, Platform } from 'react-native';
+import { LinearGradient } from 'expo-linear-gradient';
+import { MaterialIcons } from '@expo/vector-icons';
+import { User, AuthError } from '@supabase/supabase-js';
 import { supabase } from '@/utils/supabase';
-import * as ImagePicker from 'expo-image-picker';
-import { Video, ResizeMode } from 'expo-av';
+import { Picker } from '@react-native-picker/picker';
 
-interface User {
-  id: string;
-  username: string;
-}
-
-interface VideoType {
-  id: string;
-  uri: string;
-  signedUrl?: string;
-  User: User;
-}
-
-interface Like {
-  id: string;
-  video_user_id: string;
+interface ProfileSettings {
+  gender: 'Female' | 'Male' | null;
+  age: number;
+  hasDependent: boolean | null;
+  allergies: string[];
 }
 
 interface ProfileProps {
   user: User;
-  following: any[];
-  followers: any[];
-  signOut: () => Promise<void>;
+  signOut: () => Promise<{ error: AuthError | null }>;
 }
 
-export default function Profile({
-  user,
-  following,
-  followers,
-  signOut,
-}: ProfileProps) {
-  const { user: authUser, following: myFollowing, getFollowing } = useAuth();
-  const [profilePicture, setProfilePicture] = React.useState<string>('');
-  const [videos, setVideos] = React.useState<VideoType[]>([]);
-  const videoRef = React.useRef<Video>(null);
-  const [likes, setLikes] = React.useState<Like[]>([]);
+const ALLERGY_OPTIONS = [
+  'Air Pollution',
+  'Smoke',
+  'Dust',
+  'Pollen',
+  'Mold',
+  'Pet Dander',
+  'Chemical Fumes'
+];
 
-  React.useEffect(() => {
-    getVideos();
-    getLikes();
-  }, [user]);
+const AGE_OPTIONS = Array.from({ length: 100 }, (_, i) => i + 1);
 
-  const getVideos = async () => {
-    const { data, error } = await supabase
-      .from('Video')
-      .select('*, User(*)')
-      .eq('user_id', user?.id)
-      .order('created_at', { ascending: false })
-      .limit(3);
-    if (data) {
-      getSignedUrls(data);
+export default function Profile({ user, signOut }: ProfileProps) {
+  const [settings, setSettings] = useState<ProfileSettings>({
+    gender: null,
+    age: 29,
+    hasDependent: null,
+    allergies: []
+  });
+  const [showAllergiesModal, setShowAllergiesModal] = useState(false);
+  const [showAgeModal, setShowAgeModal] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+
+  useEffect(() => {
+    loadProfileSettings();
+  }, []);
+
+  const loadProfileSettings = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('UserSettings')
+        .select('*')
+        .eq('user_id', user.id)
+        .single();
+
+      if (error) throw error;
+      if (data) {
+        setSettings(data);
+      }
+    } catch (error) {
+      console.error('Error loading profile settings:', error);
     }
   };
 
-  const getLikes = async () => {
-    const { data, error } = await supabase
-      .from('Like')
-      .select('*')
-      .eq('video_user_id', user?.id);
-    if (data) {
-      setLikes(data);
+  const saveProfileSettings = async () => {
+    setIsSaving(true);
+    try {
+      const { error } = await supabase
+        .from('UserSettings')
+        .upsert({
+          user_id: user.id,
+          gender: settings.gender,
+          age: settings.age,
+          hasDependent: settings.hasDependent,
+          allergies: settings.allergies
+        });
+
+      if (error) throw error;
+      alert('Settings saved successfully!');
+    } catch (error: any) {
+      console.error('Error saving profile settings:', error);
+      alert(`Failed to save settings: ${error.message || 'Unknown error'}`);
+    } finally {
+      setIsSaving(false);
     }
   };
 
-  const getSignedUrls = async (videos: VideoType[]) => {
-    const { data, error } = await supabase
-      .storage
-      .from('videos')
-      .createSignedUrls(videos.map((video) => video.uri), 60 * 60 * 24 * 7);
-    
-    if (data) {
-      const videosUrls = videos.map((item) => ({
-        ...item,
-        signedUrl: data.find((signedUrl) => signedUrl.path === item.uri)?.signedUrl
-      }));
-      setVideos(videosUrls);
-    }
-  };
-
-  const pickImage = async () => {
-    if (authUser?.id !== user?.id) return;
-    
-    const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ImagePicker.MediaTypeOptions.All,
-      allowsEditing: true,
-      aspect: [4, 3],
-      quality: 0.1,
-    });
-
-    if (!result.canceled && result.assets?.[0]) {
-      setProfilePicture(result.assets[0].uri);
-      saveImage(result.assets[0].uri);
-    }
-  };
-
-  const saveImage = async (uri: string) => {
-    const formData = new FormData();
-    const fileName = uri?.split('/').pop();
-    const extension = fileName?.split('.').pop();
-    
-    formData.append('file', {
-      uri: uri,
-      type: `image/${extension}`,
-      name: `avatar.${extension}`
-    } as any); // Type assertion needed for React Native FormData
-
-    const { data, error } = await supabase.storage
-      .from(`avatars/${user?.id}`)
-      .upload(`avatar.${extension}`, formData, {
-        cacheControl: '3600000000',
-        upsert: true,
-      });
-    if (error) console.error(error);
-  };
-
-  const followerUser = async () => {
-    const { error } = await supabase
-      .from('Follower')
-      .insert({
-        user_id: authUser?.id,
-        follower_user_id: user?.id
-      });
-    if (!error && user?.id) {
-      getFollowing(user.id);
-    }
-  };
-
-  const unFollowUser = async () => {
-    const { error } = await supabase
-      .from('Follower')
-      .delete()
-      .eq('user_id', authUser?.id)
-      .eq('follower_user_id', user?.id);
-    if (!error && user?.id) {
-      getFollowing(user.id);
-    }
+  const toggleAllergy = (allergy: string) => {
+    setSettings(prev => ({
+      ...prev,
+      allergies: prev.allergies.includes(allergy)
+        ? prev.allergies.filter(a => a !== allergy)
+        : [...prev.allergies, allergy]
+    }));
   };
 
   return (
-    <SafeAreaView className='flex-1 items-center'>
-      <TouchableOpacity onPress={pickImage}>
-        <Image
-          source={{ uri: profilePicture || `${process.env.EXPO_PUBLIC_BUCKET}/avatars/${user?.id}/avatar.jpg` }}
-          className='w-20 h-20 rounded-full bg-black my-10'
-        />
-      </TouchableOpacity>
-      <Text className='text-2xl font-bold my-3'>@{user?.username}</Text>
-      <View className='flex-row items-center justify-center w-full my-3'>
-        <View className='items-center justify-center'>
-          <Text className='text-md font-semibold right-11'>Following</Text>
-          <Text className='text-md right-11'>{following.length}</Text>
+    <SafeAreaView className="flex-1 bg-gray-900">
+      <LinearGradient
+        colors={['rgba(0,0,0,0.8)', 'rgba(0,0,0,0.6)']}
+        className="flex-1 px-6"
+      >
+        <Text className="text-white text-3xl font-bold mt-12 mb-4">
+          Profile type
+        </Text>
+        <Text className="text-gray-400 mb-8">
+          Please fill out the questions below. Our algorithm will make sure that you get the most relevant and important notifications.
+        </Text>
+
+        {/* Gender Selection */}
+        <View className="mb-6">
+          <Text className="text-white mb-3">What is your gender?</Text>
+          <View className="flex-row space-x-4">
+            <TouchableOpacity
+              onPress={() => setSettings(prev => ({ ...prev, gender: 'Female' }))}
+              className={`px-6 py-2 rounded-full ${
+                settings.gender === 'Female' ? 'bg-blue-500' : 'bg-gray-700'
+              }`}
+            >
+              <Text className="text-white">Female</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              onPress={() => setSettings(prev => ({ ...prev, gender: 'Male' }))}
+              className={`px-6 py-2 rounded-full ${
+                settings.gender === 'Male' ? 'bg-blue-500' : 'bg-gray-700'
+              }`}
+            >
+              <Text className="text-white">Male</Text>
+            </TouchableOpacity>
+          </View>
         </View>
-        <View className='items-center justify-center'>
-          <Text className='text-md font-semibold right-1'>Followers</Text>
-          <Text className='text-md right-1'>{followers.length}</Text>
+
+        {/* Age Selection */}
+        <View className="mb-6">
+          <Text className="text-white mb-3">How old are you?</Text>
+          <TouchableOpacity 
+            onPress={() => setShowAgeModal(true)}
+            className="bg-gray-700 px-4 py-3 rounded-lg flex-row justify-between items-center"
+          >
+            <Text className="text-white">{settings.age}</Text>
+            <MaterialIcons name="keyboard-arrow-down" size={24} color="#9CA3AF" />
+          </TouchableOpacity>
         </View>
-        <View className='items-center justify-center'>
-          <Text className='text-md font-semibold left-11 mx-1'>Likes</Text>
-          <Text className='text-md left-11'>{likes.length}</Text>
+
+        {/* Dependent Question */}
+        <View className="mb-6">
+          <Text className="text-white mb-3">Do you have a child or an elder with you?</Text>
+          <View className="flex-row space-x-4">
+            <TouchableOpacity
+              onPress={() => setSettings(prev => ({ ...prev, hasDependent: true }))}
+              className={`px-6 py-2 rounded-full ${
+                settings.hasDependent === true ? 'bg-blue-500' : 'bg-gray-700'
+              }`}
+            >
+              <Text className="text-white">Yes</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              onPress={() => setSettings(prev => ({ ...prev, hasDependent: false }))}
+              className={`px-6 py-2 rounded-full ${
+                settings.hasDependent === false ? 'bg-blue-500' : 'bg-gray-700'
+              }`}
+            >
+              <Text className="text-white">No</Text>
+            </TouchableOpacity>
+          </View>
         </View>
-      </View>
-      {authUser?.id === user?.id ? (
-        <TouchableOpacity className='bg-black px-4 py-2 rounded-lg m-3' onPress={signOut}>
-          <Text className='font-bold text-white text-lg text-center'>Sign Out</Text>
+
+        {/* Allergies Selection */}
+        <View className="mb-6">
+          <Text className="text-white mb-3">Do you have any allergies?</Text>
+          <TouchableOpacity 
+            onPress={() => setShowAllergiesModal(true)}
+            className="bg-gray-700 px-4 py-3 rounded-lg flex-row justify-between items-center"
+          >
+            <Text className="text-white">
+              {settings.allergies.length > 0
+                ? settings.allergies.join(', ')
+                : 'Select allergies'}
+            </Text>
+            <MaterialIcons name="keyboard-arrow-down" size={24} color="#9CA3AF" />
+          </TouchableOpacity>
+        </View>
+
+        {/* Save Button */}
+        <TouchableOpacity 
+          onPress={saveProfileSettings}
+          disabled={isSaving}
+          className={`bg-blue-500 py-3 rounded-lg mb-4 ${isSaving ? 'opacity-50' : ''}`}
+        >
+          <Text className="text-white text-center font-semibold">
+            {isSaving ? 'Saving...' : 'Save Settings'}
+          </Text>
         </TouchableOpacity>
-      ) : (
-        <View>
-          {myFollowing.filter((u: any) => u.follower_user_id === user.id).length > 0 ? (
-            <TouchableOpacity className='bg-black px-4 py-2 rounded-lg w-full m-3' onPress={unFollowUser}>
-              <Text className='font-bold text-white text-lg'>Unfollow</Text>
-            </TouchableOpacity>
-          ) : (
-            <TouchableOpacity className='bg-black px-4 py-2 rounded-lg w-full m-3' onPress={followerUser}>
-              <Text className='font-bold text-white text-lg'>Follow</Text>
-            </TouchableOpacity>
-          )}
+
+        {/* Progress Dots */}
+        <View className="flex-row justify-center space-x-1">
+          <View className="w-2 h-2 rounded-full bg-blue-500" />
+          <View className="w-2 h-2 rounded-full bg-gray-600" />
+          <View className="w-2 h-2 rounded-full bg-gray-600" />
         </View>
-      )}
-      <FlatList
-        numColumns={3}
-        data={videos}
-        keyExtractor={(item) => item.id}
-        scrollEnabled={false}
-        renderItem={({ item }) => (
-          <Video
-            ref={videoRef}
-            style={{
-              width: Dimensions.get('window').width * 0.333,
-              height: 225,
+
+        {/* Sign Out Button */}
+        <View className="absolute bottom-8 left-6 right-6">
+          <TouchableOpacity
+            onPress={async () => {
+              const { error } = await signOut();
+              if (error) {
+                console.error('Error signing out:', error);
+              }
             }}
-            source={{ uri: item.signedUrl }}
-            resizeMode={ResizeMode.COVER}
-          />
-        )}
-      />
+            className="bg-red-500 py-3 rounded-lg"
+          >
+            <Text className="text-white text-center font-semibold">Sign Out</Text>
+          </TouchableOpacity>
+        </View>
+
+        {/* Age Picker Modal */}
+        <Modal
+          visible={showAgeModal}
+          transparent={true}
+          animationType="slide"
+        >
+          <View className="flex-1 bg-black/50 justify-end">
+            <View className="bg-gray-800 rounded-t-3xl">
+              <View className="flex-row justify-between items-center p-4 border-b border-gray-700">
+                <Text className="text-white text-xl font-bold">Select Age</Text>
+                <TouchableOpacity onPress={() => setShowAgeModal(false)}>
+                  <MaterialIcons name="close" size={24} color="white" />
+                </TouchableOpacity>
+              </View>
+              <View className="px-4 py-2">
+                <Picker
+                  selectedValue={settings.age}
+                  onValueChange={(value) => {
+                    setSettings(prev => ({ ...prev, age: value }));
+                  }}
+                  style={{ color: 'white' }}
+                  itemStyle={{ color: 'white' }}
+                >
+                  {AGE_OPTIONS.map((age) => (
+                    <Picker.Item key={age} label={age.toString()} value={age} />
+                  ))}
+                </Picker>
+              </View>
+              <TouchableOpacity
+                onPress={() => setShowAgeModal(false)}
+                className="bg-blue-500 m-4 py-3 rounded-lg"
+              >
+                <Text className="text-white text-center font-semibold">Done</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </Modal>
+
+        {/* Allergies Modal */}
+        <Modal
+          visible={showAllergiesModal}
+          transparent={true}
+          animationType="slide"
+        >
+          <View className="flex-1 bg-black/50 justify-end">
+            <View className="bg-gray-800 rounded-t-3xl p-6">
+              <View className="flex-row justify-between items-center mb-6">
+                <Text className="text-white text-xl font-bold">Select Allergies</Text>
+                <TouchableOpacity onPress={() => setShowAllergiesModal(false)}>
+                  <MaterialIcons name="close" size={24} color="white" />
+                </TouchableOpacity>
+              </View>
+              <ScrollView className="max-h-96">
+                {ALLERGY_OPTIONS.map((allergy) => (
+                  <TouchableOpacity
+                    key={allergy}
+                    onPress={() => toggleAllergy(allergy)}
+                    className="flex-row items-center justify-between py-3 border-b border-gray-700"
+                  >
+                    <Text className="text-white text-lg">{allergy}</Text>
+                    {settings.allergies.includes(allergy) && (
+                      <MaterialIcons name="check" size={24} color="#3B82F6" />
+                    )}
+                  </TouchableOpacity>
+                ))}
+              </ScrollView>
+              <TouchableOpacity
+                onPress={() => setShowAllergiesModal(false)}
+                className="bg-blue-500 py-3 rounded-lg mt-4"
+              >
+                <Text className="text-white text-center font-semibold">Done</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </Modal>
+      </LinearGradient>
     </SafeAreaView>
   );
 }

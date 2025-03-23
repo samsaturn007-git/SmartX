@@ -13,6 +13,7 @@ interface WeatherData {
 
 interface WeatherWidgetProps {
   data: WeatherData;
+  city: string;
 }
 
 const getWeatherIcon = (condition: string) => {
@@ -36,9 +37,10 @@ const getHumidityStatus = (humidity: number) => {
   return { text: 'High', color: '#3B82F6' };
 };
 
-export default function WeatherWidget({ data }: WeatherWidgetProps) {
+export default function WeatherWidget({ data, city }: WeatherWidgetProps) {
   const [showDetails, setShowDetails] = React.useState(false);
   const rotateAnim = React.useRef(new Animated.Value(0)).current;
+  const humidityAnim = React.useRef(new Animated.Value(0)).current;
 
   React.useEffect(() => {
     Animated.timing(rotateAnim, {
@@ -46,11 +48,25 @@ export default function WeatherWidget({ data }: WeatherWidgetProps) {
       duration: 300,
       useNativeDriver: true,
     }).start();
-  }, [showDetails]);
+
+    if (showDetails) {
+      humidityAnim.setValue(0);
+      Animated.timing(humidityAnim, {
+        toValue: data.humidity,
+        duration: 1000,
+        useNativeDriver: false,
+      }).start();
+    }
+  }, [showDetails, data.humidity]);
 
   const rotate = rotateAnim.interpolate({
     inputRange: [0, 1],
     outputRange: ['0deg', '180deg'],
+  });
+
+  const humidityWidth = humidityAnim.interpolate({
+    inputRange: [0, 100],
+    outputRange: ['0%', '100%'],
   });
 
   const humidityStatus = getHumidityStatus(data.humidity);
@@ -69,7 +85,7 @@ export default function WeatherWidget({ data }: WeatherWidgetProps) {
           />
           <View className="ml-3">
             <Text className="text-white text-2xl font-bold">{data.temp}°C</Text>
-            <Text className="text-gray-400">Feels comfortable</Text>
+            <Text className="text-gray-400">{city}</Text>
           </View>
         </View>
         <Animated.View style={{ transform: [{ rotate }] }}>
@@ -119,12 +135,17 @@ export default function WeatherWidget({ data }: WeatherWidgetProps) {
               <Text style={{ color: humidityStatus.color }}>{humidityStatus.text}</Text>
             </View>
             <View className="h-2 bg-gray-600 rounded-full overflow-hidden">
-              <View 
-                style={{ 
-                  width: `${data.humidity}%`,
-                  backgroundColor: humidityStatus.color
+              <Animated.View
+                style={{
+                  width: humidityWidth,
+                  backgroundColor: humidityStatus.color,
+                  height: '100%',
+                  borderRadius: 4,
+                  shadowColor: humidityStatus.color,
+                  shadowOffset: { width: 0, height: 0 },
+                  shadowOpacity: 0.5,
+                  shadowRadius: 4,
                 }}
-                className="h-full"
               />
             </View>
           </View>

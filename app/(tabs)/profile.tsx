@@ -3,8 +3,9 @@ import { useAuth } from '@/providers/AuthProvider';
 import Profile from '@/components/profile';
 
 export default function() {
+    const { user, signOut } = useAuth();
 
-    const { user, signOut, following, followers } = useAuth() 
+    if (!user) return null;
 
-    return <Profile user={user} following={following} followers={followers} signOut={signOut}/> 
-}   
+    return <Profile user={user} signOut={signOut} />;
+}

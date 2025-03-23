@@ -1,10 +1,20 @@
 import { router, Tabs, useRouter } from 'expo-router';
 import { Text,View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import React from 'react';
+import React, { useEffect } from 'react';
 import { useAuth } from '@/providers/AuthProvider';
-export default function TabLayout() {
 
+export default function TabLayout() {
+  const { user } = useAuth();
+  const router = useRouter();
+
+  useEffect(() => {
+    if (!user) {
+      router.replace('/(auth)');
+    }
+  }, [user]);
+
+  if (!user) return null;
 
   return (
     <Tabs
@@ -37,7 +47,7 @@ export default function TabLayout() {
           }}
       />
       <Tabs.Screen
-        name="inbox"
+        name="emergency"
         options={{
           title: 'Emergency',
           tabBarIcon: ({focused}) => <Ionicons name={focused ? "alert-circle" : "alert-circle-outline"} size={24} color="black" />,

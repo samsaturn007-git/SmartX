@@ -8,10 +8,12 @@ import { StatusBar } from 'expo-status-bar';
 
 export default function SignUp() {
     const router = useRouter();
-    const [email, setEmail] = React.useState('');   
+    const [email, setEmail] = React.useState('');
     const [password, setPassword] = React.useState('');
     const [username, setUsername] = React.useState('');
     const [showPassword, setShowPassword] = React.useState(false);
+    const [error, setError] = React.useState('');
+    const [loading, setLoading] = React.useState(false);
     const { signUp } = useAuth();
 
     return (
@@ -90,19 +92,52 @@ export default function SignUp() {
                             </View>
                         </View>
 
+                        {/* Error Message */}
+                        {error && (
+                            <View className="mb-4">
+                                <Text className="text-red-500 text-center">{error}</Text>
+                            </View>
+                        )}
+
                         {/* Sign Up Button */}
                         <TouchableOpacity
                             className="bg-[#1a1a1a] py-4 rounded-2xl mb-6 shadow-lg"
-                            onPress={() => signUp(username, email, password)}
+                            onPress={async () => {
+                                try {
+                                    if (!username || !email || !password) {
+                                        setError('Please fill in all fields');
+                                        return;
+                                    }
+                                    setError('');
+                                    setLoading(true);
+                                    const result = await signUp(username, email, password);
+                                    if (result.error) {
+                                        setError(result.error.message);
+                                    } else if (result.message) {
+                                        // Show confirmation message and redirect to sign in
+                                        alert(result.message);
+                                        router.replace('/');
+                                    } else {
+                                        router.replace('/(tabs)');
+                                    }
+                                } catch (err) {
+                                    setError('An unexpected error occurred');
+                                    console.error(err);
+                                } finally {
+                                    setLoading(false);
+                                }
+                            }}
+                            disabled={loading}
                             style={{
                                 shadowColor: '#ff0077',
                                 shadowOffset: { width: 0, height: 4 },
                                 shadowOpacity: 0.3,
                                 shadowRadius: 5,
+                                opacity: loading ? 0.7 : 1,
                             }}
                         >
                             <Text className="text-white font-bold text-lg text-center">
-                                Sign Up
+                                {loading ? 'Signing Up...' : 'Sign Up'}
                             </Text>
                         </TouchableOpacity>
 
